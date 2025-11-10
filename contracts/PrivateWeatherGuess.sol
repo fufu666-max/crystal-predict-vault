@@ -76,6 +76,13 @@ contract PrivateWeatherGuess is SepoliaConfig {
     }
 
     /// @notice Submit new encrypted weather prediction
+    /// @dev Allows users to submit temperature predictions with encrypted temperature and confidence
+    /// @param location Location for the weather prediction
+    /// @param targetDate Target date for the prediction (Unix timestamp)
+    /// @param encryptedTemperature Encrypted temperature in Celsius (multiplied by 10, e.g., 25.5°C = 255)
+    /// @param temperatureProof ZK proof for encrypted temperature
+    /// @param encryptedConfidence Encrypted confidence level (0-1000, where 1000 = 100%)
+    /// @param confidenceProof ZK proof for encrypted confidence
     function submitPrediction(
         string memory location,
         uint256 targetDate,
@@ -83,12 +90,22 @@ contract PrivateWeatherGuess is SepoliaConfig {
         bytes calldata temperatureProof,
         externalEuint32 encryptedConfidence,
         bytes calldata confidenceProof
-    ) external {
+    ) external whenNotPaused {
+        require(bytes(location).length > 0 && bytes(location).length <= 100, "Location must be 1-100 characters");
+        require(targetDate > block.timestamp, "Target date must be in the future");
+        require(targetDate <= block.timestamp + 365 days, "Target date cannot be more than 1 year in the future");
+
         uint256 predictionId = predictionCount++;
 
         // Import encrypted values
         euint32 encryptedTemp = FHE.fromExternal(encryptedTemperature, temperatureProof);
         euint32 encryptedConf = FHE.fromExternal(encryptedConfidence, confidenceProof);
+
+        // Grant access: contract and owner can decrypt
+        FHE.allowThis(encryptedTemp);
+        FHE.allow(encryptedTemp, msg.sender);
+        FHE.allowThis(encryptedConf);
+        FHE.allow(encryptedConf, msg.sender);
 
         // Create prediction
         predictions[predictionId] = Prediction({
@@ -114,6 +131,7 @@ contract PrivateWeatherGuess is SepoliaConfig {
     }
 
     /// @notice Get prediction basic information
+    /// @param predictionId Prediction ID
     function getPrediction(uint256 predictionId) external view returns (
         address predictor,
         string memory location,
@@ -131,6 +149,28 @@ contract PrivateWeatherGuess is SepoliaConfig {
             prediction.isRevealed,
             prediction.isActive
         );
+    }
+
+    /// @notice Get encrypted temperature (only accessible by prediction owner or after reveal)
+    /// @param predictionId Prediction ID
+    function getEncryptedTemperature(uint256 predictionId) external view returns (euint32) {
+        require(predictions[predictionId].isActive, "Prediction does not exist");
+        require(
+            predictions[predictionId].predictor == msg.sender || predictions[predictionId].isRevealed,
+            "Only prediction owner can access encrypted data before reveal"
+        );
+        return _encryptedData[predictionId].encryptedTemperature;
+    }
+
+    /// @notice Get encrypted confidence (only accessible by prediction owner or after reveal)
+    /// @param predictionId Prediction ID
+    function getEncryptedConfidence(uint256 predictionId) external view returns (euint32) {
+        require(predictions[predictionId].isActive, "Prediction does not exist");
+        require(
+            predictions[predictionId].predictor == msg.sender || predictions[predictionId].isRevealed,
+            "Only prediction owner can access encrypted data before reveal"
+        );
+        return _encryptedData[predictionId].encryptedConfidence;
     }
 
     /// @notice Submit new encrypted weather prediction
