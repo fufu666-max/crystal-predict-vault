@@ -78,13 +78,19 @@ describe("PrivateWeatherGuess", function () {
   it("should handle leaderboard correctly", async function () {
     const { instance } = await fhevm.createInstance();
 
-    // Submit multiple predictions
-    for (let i = 0; i < 3; i++) {
-      const temperature = instance.encrypt32(200 + i * 50); // 20°C, 25°C, 30°C
-      const confidence = instance.encrypt32(800);
+    // Submit multiple predictions with different temperatures
+    const predictions = [
+      { temp: 250, location: "New York", expectedAccuracy: 9500 }, // Close to actual 255
+      { temp: 200, location: "London", expectedAccuracy: 8000 },   // Farther from actual
+      { temp: 300, location: "Tokyo", expectedAccuracy: 7000 }     // Furthest from actual
+    ];
+
+    for (let i = 0; i < predictions.length; i++) {
+      const temperature = instance.encrypt32(predictions[i].temp);
+      const confidence = instance.encrypt32(900); // High confidence
 
       const tx = await contract.connect(signers.alice).submitPrediction(
-        `Location${i}`,
+        predictions[i].location,
         Math.floor(Date.now() / 1000) + 86400,
         temperature.handles[0],
         temperature.inputProof,
@@ -94,22 +100,43 @@ describe("PrivateWeatherGuess", function () {
       await tx.wait();
     }
 
-    // Reveal predictions with wrong logic (bug: using wrong accuracy calculation)
+    // Fast forward time to allow reveals
     const futureTime = Math.floor(Date.now() / 1000) + 86400 * 2;
     await ethers.provider.send("evm_setNextBlockTimestamp", [futureTime]);
     await ethers.provider.send("evm_mine", []);
 
-    for (let i = 0; i < 3; i++) {
-      // Bug: Wrong accuracy calculation - should be based on actual vs predicted
-      // but here we're just setting fixed values
-      const wrongAccuracy = (i + 1) * 2500; // 25%, 50%, 75% - this is wrong logic
-      await contract.connect(signers.deployer).updateLeaderboardAccuracy(i, wrongAccuracy);
+    // Reveal predictions with actual temperature of 255 (25.5°C)
+    const actualTemperature = 255;
+    for (let i = 0; i < predictions.length; i++) {
+      await contract.connect(signers.deployer).revealPrediction(i, actualTemperature);
     }
 
-    // Bug: Leaderboard sorting is wrong - should sort by accuracy descending
-    // but current implementation doesn't sort properly
+    // Verify leaderboard count
     const leaderboardCount = await contract.getLeaderboardCount();
     expect(leaderboardCount).to.eq(3);
+
+    // Get top predictions - should be sorted by accuracy (highest first)
+    const topPredictions = await contract.getTopPredictions(3);
+
+    // Verify the first prediction (closest to actual temp) has highest accuracy
+    const firstEntry = await contract.getLeaderboardEntry(topPredictions[0]);
+    expect(firstEntry.predictor).to.eq(signers.alice.address);
+
+    // Verify sorting - first should have higher accuracy than third
+    const thirdEntry = await contract.getLeaderboardEntry(topPredictions[2]);
+    expect(firstEntry.accuracy).to.be.greaterThan(thirdEntry.accuracy);
+
+    // Test user statistics
+    const [totalPredictions, revealedPredictions, averageAccuracy] = await contract.getUserStats(signers.alice.address);
+    expect(totalPredictions).to.eq(3);
+    expect(revealedPredictions).to.eq(3);
+    expect(averageAccuracy).to.be.greaterThan(0);
+
+    // Test global statistics
+    const [globalTotal, globalRevealed, globalAverage] = await contract.getGlobalStats();
+    expect(globalTotal).to.eq(3);
+    expect(globalRevealed).to.eq(3);
+    expect(globalAverage).to.be.greaterThan(0);
   });
 
   it("should allow user to submit encrypted weather prediction", async function () {
