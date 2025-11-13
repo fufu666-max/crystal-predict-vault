@@ -1,9 +1,10 @@
-import { useContractRead, useAccount, useChainId, useWalletClient } from 'wagmi';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { getContractAddress, CONTRACT_ABI } from '../config/contracts';
-import { getFHEVMInstance, encryptInput, decryptEuint32 } from '../lib/fhevm';
+import { useContractRead, useAccount, useChainId, useWalletClient, useContractEvent } from 'wagmi';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getContractAddress, CONTRACT_ABI, CONTRACT_EVENTS } from '../config/contracts';
+import { getFHEVMInstance, encryptInput, decryptEuint32, useContractEvents } from '../lib/fhevm';
 import { toast } from 'sonner';
 import { ethers } from 'ethers';
+import { useEffect, useState } from 'react';
 
 export interface Prediction {
   predictor: string;
@@ -42,7 +43,62 @@ export const usePredictionCount = () => {
   });
 };
 
-// Hook to get user prediction count
+// Hook for real-time prediction status updates
+export const useRealtimePredictions = () => {
+  const contractAddress = useContractAddress();
+  const queryClient = useQueryClient();
+  const [lastEvent, setLastEvent] = useState<any>(null);
+
+  // Listen for prediction events
+  useContractEvent({
+    address: contractAddress as `0x${string}`,
+    abi: CONTRACT_ABI,
+    eventName: CONTRACT_EVENTS.PREDICTION_SUBMITTED,
+    listener: (logs) => {
+      console.log('[Realtime] Prediction submitted:', logs);
+      setLastEvent({ type: 'submitted', data: logs });
+      // Invalidate and refetch prediction data
+      queryClient.invalidateQueries({ queryKey: ['predictions'] });
+      queryClient.invalidateQueries({ queryKey: ['predictionCount'] });
+      queryClient.invalidateQueries({ queryKey: ['userPredictions'] });
+    },
+  });
+
+  useContractEvent({
+    address: contractAddress as `0x${string}`,
+    abi: CONTRACT_ABI,
+    eventName: CONTRACT_EVENTS.PREDICTION_REVEALED,
+    listener: (logs) => {
+      console.log('[Realtime] Prediction revealed:', logs);
+      setLastEvent({ type: 'revealed', data: logs });
+      // Invalidate leaderboard and prediction data
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+      queryClient.invalidateQueries({ queryKey: ['predictions'] });
+      queryClient.invalidateQueries({ queryKey: ['globalStats'] });
+    },
+  });
+
+  return { lastEvent };
+};
+
+// Hook for real-time leaderboard updates
+export const useRealtimeLeaderboard = () => {
+  const contractAddress = useContractAddress();
+  const queryClient = useQueryClient();
+
+  useContractEvent({
+    address: contractAddress as `0x${string}`,
+    abi: CONTRACT_ABI,
+    eventName: CONTRACT_EVENTS.LEADERBOARD_UPDATED,
+    listener: (logs) => {
+      console.log('[Realtime] Leaderboard updated:', logs);
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+      queryClient.invalidateQueries({ queryKey: ['topPredictions'] });
+    },
+  });
+};
+
+// Hook for user prediction count
 export const useUserPredictionCount = (userAddress?: string) => {
   const { address } = useAccount();
   const contractAddress = useContractAddress();
@@ -271,5 +327,87 @@ export const useLeaderboardCount = () => {
     functionName: 'getLeaderboardCount',
     enabled: !!contractAddress,
   });
+};
+
+// Hook for real-time global statistics with auto-refresh
+export const useGlobalStats = () => {
+  const contractAddress = useContractAddress();
+
+  return useQuery({
+    queryKey: ['globalStats', contractAddress],
+    queryFn: async () => {
+      if (!contractAddress) return null;
+
+      const provider = new ethers.BrowserProvider(window.ethereum!);
+      const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, provider);
+
+      const [total, revealed, average] = await contract.getGlobalStats();
+      return {
+        totalPredictions: Number(total),
+        revealedPredictions: Number(revealed),
+        averageAccuracy: Number(average) / 100, // Convert from basis points
+      };
+    },
+    enabled: !!contractAddress,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+};
+
+// Hook for prediction status monitoring with real-time updates
+export const usePredictionStatus = (predictionId: number) => {
+  const contractAddress = useContractAddress();
+
+  return useQuery({
+    queryKey: ['predictionStatus', contractAddress, predictionId],
+    queryFn: async () => {
+      if (!contractAddress || predictionId < 0) return null;
+
+      const provider = new ethers.BrowserProvider(window.ethereum!);
+      const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, provider);
+
+      const prediction = await contract.getPrediction(predictionId);
+      return {
+        predictor: prediction[0],
+        location: prediction[1],
+        targetDate: Number(prediction[2]),
+        submissionTime: Number(prediction[3]),
+        isRevealed: prediction[4],
+        isActive: prediction[5],
+      };
+    },
+    enabled: !!contractAddress && predictionId >= 0,
+    refetchInterval: (data) => {
+      // Stop auto-refresh if prediction is revealed or inactive
+      if (data && (!data.isActive || data.isRevealed)) {
+        return false;
+      }
+      return 10000; // Refresh every 10 seconds for active unrevealed predictions
+    },
+  });
+};
+
+// Hook for notification system
+export const usePredictionNotifications = () => {
+  const { lastEvent } = useRealtimePredictions();
+  const { toast } = { toast }; // Assuming toast is imported
+
+  useEffect(() => {
+    if (lastEvent) {
+      switch (lastEvent.type) {
+        case 'submitted':
+          toast({
+            title: "New Prediction Submitted",
+            description: "A new weather prediction has been submitted to the network.",
+          });
+          break;
+        case 'revealed':
+          toast({
+            title: "Prediction Revealed",
+            description: "A weather prediction has been revealed and accuracy calculated.",
+          });
+          break;
+      }
+    }
+  }, [lastEvent, toast]);
 };
 
