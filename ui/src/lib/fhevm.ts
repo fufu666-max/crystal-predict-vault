@@ -23,8 +23,8 @@ let isSDKInitialized = false;
 let lastChainId: number | null = null; // Track the chainId used to create fhevmInstance
 let contractEventListeners: any[] = []; // Track active event listeners
 
-// React hook for FHEVM integration with event listeners
-export function useFHEVM() {
+// React hook for FHEVM integration with event listeners - memoized for performance
+export const useFHEVM = React.memo(() => {
   const [isReady, setIsReady] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [networkStatus, setNetworkStatus] = React.useState<'connecting' | 'connected' | 'disconnected'>('connecting');
