@@ -1,12 +1,22 @@
-import { Trophy, Medal, Award } from "lucide-react";
+import { Trophy, Medal, Award, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useLeaderboardCount, useLeaderboardEntry, usePrediction } from "@/hooks/useWeatherPrediction";
+import { Button } from "@/components/ui/button";
+import { useLeaderboardCount, useLeaderboardEntry, usePrediction, useRealtimeLeaderboard } from "@/hooks/useWeatherPrediction";
+import { useQueryClient } from "@tanstack/react-query";
 
 const Leaderboard = () => {
   const { data: leaderboardCount } = useLeaderboardCount();
-  
+  const queryClient = useQueryClient();
+
+  // Enable real-time updates
+  useRealtimeLeaderboard();
+
   // Get all leaderboard entries
   const leaderboardIds = Array.from({ length: Number(leaderboardCount || 0) }, (_, i) => i);
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+  };
 
   const getRankIcon = (rank: number) => {
     switch (rank) {
