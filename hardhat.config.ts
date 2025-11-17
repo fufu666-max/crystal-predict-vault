@@ -1,3 +1,13 @@
+/**
+ * Crystal Predict Vault - Hardhat Configuration
+ *
+ * Architecture:
+ * - Contracts: Solidity smart contracts with FHEVM integration
+ * - Frontend: React + TypeScript with wagmi for blockchain interaction
+ * - FHEVM: Zama's Fully Homomorphic Encryption Virtual Machine
+ * - Networks: Local development (hardhat), Sepolia testnet
+ */
+
 import "@fhevm/hardhat-plugin";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@nomicfoundation/hardhat-ethers";
